@@ -1,15 +1,17 @@
-# Contribution [#]: [Issue Title]
+# Contribution 1: fix: split auth/timeout/connection error classes in signals_agent_registry
 
-**Contribution Number:** [1 / 2 / 3]  
-**Student:** [Your Name]  
-**Issue:** [GitHub issue link]  
-**Status:** [Phase I / Phase II / Phase III / Phase IV] [In Progress / Complete]
+**Contribution Number:** 1  
+**Student:** Felix Mathew  
+**Issue:** https://github.com/prebid/salesagent/issues/1433  
+**Status:** Phase I Complete
 
 ---
 
 ## Why I Chose This Issue
 
-[1-2 paragraphs explaining why this issue interests you, how it matches your skills/learning goals, what you hope to learn]
+I chose issue #1433 from the prebid/salesagent repository because handling network resilience and SDK exceptions is a core competency for Backend and Cloud Engineers. Currently, the system flattens distinct network failures into a single generic error, which hinders observability. By decoupling these exception classes, I will gain hands-on experience improving backend error handling and system logging, which are critical for debugging production microservices.
+
+Additionally, as a recent M.S. Computer Science graduate targeting backend infrastructure roles, working on a massive, enterprise-backed project like Prebid allows me to navigate production-grade architecture. This issue perfectly aligns with my goals to strengthen my Python API skills and understand how large distributed systems handle network failures and timeouts gracefully.
 
 ---
 
@@ -17,19 +19,20 @@
 
 ### Problem Description
 
-[In your own words, what's broken or missing?]
+In `signals_agent_registry.py` (lines 219-233), the code currently catches four distinct network and SDK exceptions (like Authentication errors, Timeouts, and Connection issues) but squashes them into one generic `AdCPAdapterError`. This makes it impossible for the system or developers to know the actual root cause of a network failure.
 
 ### Expected Behavior
 
-[What should happen?]
+The signals agent registry should maintain the specificity of the errors. It should raise distinct, specific error classes (e.g., `ADCPAuthenticationError`, `ADCPTimeoutError`, `ADCPConnectionError`) so the caller knows the exact nature of the failure, mirroring how errors are already handled in the `creative_registry`.
 
 ### Current Behavior
 
-[What actually happens?]
+All four distinct SDK exceptions are flattened and re-raised as a single, generic `AdCPAdapterError`, wiping out the specific context of the network failure. 
 
 ### Affected Components
 
-[Which parts of the codebase are involved?]
+- `signals_agent_registry.py` (specifically the exception handling block around lines 219-233).
+- Potentially the exception definition classes if new ones need to be imported or mirrored from the creative registry.
 
 ---
 
