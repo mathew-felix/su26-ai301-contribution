@@ -3,7 +3,7 @@
 **Contribution Number:** 1  
 **Student:** Felix Mathew  
 **Issue:** https://github.com/prebid/salesagent/issues/1433  
-**Status:** Phase II Complete
+**Status:** Phase III Complete
 
 ---
 
@@ -167,12 +167,47 @@ Apply the same exception mapping that already exists in `creative_agent_registry
    - `ADCPError` (catch-all) → keep `raise AdCPAdapterError(str(e.message))` (matches creative registry)
 3. In `tests/unit/test_signals_agent_registry.py`: update the existing auth error test to expect `AdCPAuthenticationError` instead of `AdCPAdapterError`, and add two new tests for the timeout and connection error mappings
 
-**Implement:** https://github.com/mathew-felix/salesagent/tree/fix-issue-1433 (implementation in Phase III)
+**Implement:** https://github.com/mathew-felix/salesagent/tree/fix-issue-1433 — commit [`2947c77`](https://github.com/mathew-felix/salesagent/commit/2947c77e)
 
-**Review:** Will check against `CONTRIBUTING.md` (Conventional Commits format required: `fix: ...`), run `make quality` (ruff + mypy + unit tests + duplication check), and verify the PR title passes the `pr-title-check.yml` GitHub Action.
+**Review:** Checked against `CONTRIBUTING.md` — used Conventional Commits format (`fix: ...`). Ran `make quality` (ruff formatting, ruff lint, mypy typecheck, unit tests, duplication baseline — all passed, exit code 0). PR title will follow the same `fix:` prefix.
 
 **Evaluate:**
-- Run `pytest tests/unit/test_signals_agent_registry.py -v` — all tests must pass, including the updated auth test and two new ones
-- Run `make quality` — lint, typecheck, and duplication checks must all pass
-- Manually run the reproduction script from Step 3 above and confirm it now raises `AdCPAuthenticationError(401, terminal)` instead of `AdCPAdapterError(502, transient)`
+- Ran `pytest tests/unit/test_signals_agent_registry.py -v` — 9/9 passed including the updated auth test and two new tests
+- Ran `make quality` — all checks passed (0 new duplicate blocks, 0 mypy errors, 0 lint violations)
+- Ran the reproduction script — now correctly raises `AdCPAuthenticationError(401, terminal)` instead of `AdCPAdapterError(502, transient)`
+
+---
+
+## Implementation Notes
+
+### Week 1 Progress
+
+**What I built:**
+
+Updated `src/core/signals_agent_registry.py` to properly map ADCP library exceptions to specific internal exception types, matching the established pattern in `creative_agent_registry.py`.
+
+**Files modified:**
+- `src/core/signals_agent_registry.py` — expanded import on line 37 to include `AdCPAuthenticationError` and `AdCPServiceUnavailableError`; updated the four `except` blocks (lines 219–233) to raise the correct exception type per failure
+- `tests/unit/test_signals_agent_registry.py` — updated the existing auth error test to assert `AdCPAuthenticationError` (was `AdCPAdapterError`); added two new tests for `ADCPTimeoutError` → `AdCPServiceUnavailableError` and `ADCPConnectionError` → `AdCPServiceUnavailableError`
+
+**Key commit:** [`2947c77`](https://github.com/mathew-felix/salesagent/commit/2947c77e) — fix: map ADCP exceptions to specific types in signals_agent_registry
+
+**Challenges faced:**
+- The project uses `uv` for dependency management which was not on the system PATH by default on macOS — worked around by prefixing `PATH="$HOME/Library/Python/3.9/bin:$PATH"` to all commands
+- No Docker required for this fix — the bug and tests are entirely unit-testable without spinning up the full stack
+
+**Approach decisions:**
+- Chose a minimal 2-file change with no refactoring — the CLAUDE.md project guide explicitly warns against DRY-extracting shared helpers unless duplication increases (the baseline was already set with the creative registry having the same pattern)
+- Kept log messages consistent with the existing wording to avoid noisy diffs
+
+---
+
+## Testing Strategy
+
+**New tests added** (`tests/unit/test_signals_agent_registry.py`):
+- `test_get_signals_from_agent_handles_auth_error` — updated to assert `AdCPAuthenticationError` (401, terminal) is raised when `ADCPAuthenticationError` comes from the library
+- `test_get_signals_from_agent_handles_timeout_error` — new: asserts `AdCPServiceUnavailableError` (503) is raised on `ADCPTimeoutError`
+- `test_get_signals_from_agent_handles_connection_error` — new: asserts `AdCPServiceUnavailableError` (503) is raised on `ADCPConnectionError`
+
+**Results:** 9/9 unit tests passed. Full `make quality` passed (ruff, mypy, duplication check, unit suite).
 
