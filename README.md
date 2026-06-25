@@ -3,7 +3,7 @@
 **Contribution Number:** 1  
 **Student:** Felix Mathew  
 **Issue:** https://github.com/prebid/salesagent/issues/1433  
-**Status:** Phase III Complete
+**Status:** Phase IV Complete
 
 ---
 
@@ -210,4 +210,34 @@ Updated `src/core/signals_agent_registry.py` to properly map ADCP library except
 - `test_get_signals_from_agent_handles_connection_error` — new: asserts `AdCPServiceUnavailableError` (503) is raised on `ADCPConnectionError`
 
 **Results:** 9/9 unit tests passed. Full `make quality` passed (ruff, mypy, duplication check, unit suite).
+
+---
+
+## Pull Request
+
+**PR Link:** https://github.com/prebid/salesagent/pull/1483
+
+**PR Description:** Fixed exception mapping in `signals_agent_registry.py` so that `ADCPAuthenticationError`, `ADCPTimeoutError`, and `ADCPConnectionError` are re-raised as their correct internal types (`AdCPAuthenticationError`, `AdCPServiceUnavailableError`) instead of being flattened into the generic `AdCPAdapterError`. Matches the existing pattern in `creative_agent_registry.py`.
+
+**Maintainer Feedback:**
+- Awaiting review from @chrishuie
+
+**Status:** Awaiting review
+
+---
+
+## Learnings & Reflections
+
+### Technical Skills Gained
+- Learned how exception hierarchies carry semantic meaning (HTTP status codes, retry hints) in a real production Python codebase
+- Gained hands-on experience navigating a large open source project with strict architecture guards (`make quality`, pre-commit hooks, AST-scanning tests)
+- Understood the importance of matching existing patterns in a codebase rather than inventing new ones
+
+### Challenges Overcome
+- `uv` was not on the system PATH by default on macOS — resolved by locating the binary and prefixing commands
+- No Docker was required for this fix, which simplified the reproduction and testing workflow significantly
+
+### What I'd Do Differently Next Time
+- Set up the full Docker stack earlier to be ready for integration tests in case they were needed
+- Look for existing patterns in the codebase before planning the fix — the answer was already in `creative_agent_registry.py`
 
