@@ -9,7 +9,7 @@ A running log of all open source contributions completed as part of the CodePath
 | # | Project | Issue | Type | Status | PR |
 |---|---------|-------|------|--------|----|
 | 1 | [prebid/salesagent](https://github.com/prebid/salesagent) | [#1433 — map ADCP exceptions to specific types in signals_agent_registry](https://github.com/prebid/salesagent/issues/1433) | Bug Fix | Merged ✅ | [#1483](https://github.com/prebid/salesagent/pull/1483) |
-| 2 | — | — | — | Not started | — |
+| 2 | [BerriAI/litellm](https://github.com/BerriAI/litellm) | [#32140 — Router fallback between vertex_ai and gemini replays endpoint-bound thought signatures](https://github.com/BerriAI/litellm/issues/32140) | Bug Fix | Phase I In Progress | — |
 
 ---
 
@@ -26,4 +26,4 @@ A running log of all open source contributions completed as part of the CodePath
 ## Contribution READMEs
 
 - [Contribution #1 — prebid/salesagent #1433](README%20Issue%20%231.md)
-- [Contribution #2 — Template](README%20Issue%20%232.md)
+- [Contribution #2 — BerriAI/litellm #32140](README%20Issue%20%232.md)
