@@ -3,7 +3,7 @@
 **Contribution Number:** 2  
 **Student:** Felix Mathew  
 **Issue:** https://github.com/BerriAI/litellm/issues/32140  
-**Status:** Phase I In Progress
+**Status:** Phase II Complete
 
 ---
 
@@ -45,19 +45,96 @@ The codebase already has this exact substitution mechanism, but only for the cas
 
 ### Environment Setup
 
-[Notes on setting up your local development environment - challenges you faced, how you solved them]
+LiteLLM uses `uv` for dependency management, same as my first contribution. Setup was smooth:
+
+1. Cloned the fork: `git clone git@github.com:mathew-felix/litellm.git && cd litellm`
+2. Confirmed already on `litellm_internal_staging` (LiteLLM's convention: branch off this, not `main`, per CONTRIBUTING.md)
+3. Installed dependencies: `PATH="$HOME/Library/Python/3.9/bin:$PATH" make install-dev` (runs `uv sync --inexact --frozen`) — completed cleanly with no errors, no missing system dependencies
+4. No `.env` or API keys were needed to reproduce this bug — the affected code is pure message-transformation logic (`convert_to_gemini_tool_call_invoke`), no live network calls required
+
+**Challenge:** Same as before, `uv` was not on the system PATH by default on macOS — resolved with the same `PATH="$HOME/Library/Python/3.9/bin:$PATH"` prefix used for my first contribution.
 
 ### Steps to Reproduce
 
-1. [Step 1]
-2. [Step 2]
-3. [Observed result]
+The bug is in `litellm/litellm_core_utils/prompt_templates/factory.py`. There is no code path that detects a thought signature came from a *different* provider than the one it's about to be sent to.
+
+**Step 1 — Create the working branch:**
+```bash
+git checkout -b fix-issue-32140
+git push origin fix-issue-32140
+```
+
+**Step 2 — Run this reproduction script** (simulates a Vertex AI response minting a signature, then the Router falling back to Google AI Studio with that signature still attached):
+
+```python
+from litellm.litellm_core_utils.prompt_templates.factory import (
+    _encode_tool_call_id_with_signature,
+    convert_to_gemini_tool_call_invoke,
+)
+
+# Step 1: simulate a Vertex AI response minting a thought signature for a tool call.
+vertex_minted_signature = "VERTEX_ONLY_SIGNATURE_BASE64=="
+tool_call_id = _encode_tool_call_id_with_signature("call_abc123", vertex_minted_signature)
+print(f"Tool call ID after Vertex AI response: {tool_call_id}")
+
+# Step 2: Router falls back to Google AI Studio (custom_llm_provider="gemini") for the next turn.
+# The message history (including the Vertex-minted signature) is replayed unchanged.
+assistant_message = {
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [
+        {
+            "id": tool_call_id,
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"location": "Boston"}'},
+        }
+    ],
+}
+
+gemini_parts = convert_to_gemini_tool_call_invoke(
+    message=assistant_message,
+    model="gemini-3-pro-preview",
+    custom_llm_provider="gemini",  # fallback target is Google AI Studio, NOT Vertex AI
+)
+
+print(f"\nthoughtSignature forwarded to the NEW endpoint: {gemini_parts[0].get('thoughtSignature')}")
+print(f"Is it the ORIGINAL Vertex-minted signature (the bug)? {gemini_parts[0].get('thoughtSignature') == vertex_minted_signature}")
+```
+
+**Observed output:**
+```
+Tool call ID after Vertex AI response: call_abc123__thought__VERTEX_ONLY_SIGNATURE_BASE64==
+
+thoughtSignature forwarded to the NEW endpoint: VERTEX_ONLY_SIGNATURE_BASE64==
+Is it the ORIGINAL Vertex-minted signature (the bug)? True
+```
+
+**Step 3 — Reproduced twice, same result both times.** Confirmed with a second run using a different dummy signature string and tool call ID; the foreign signature is forwarded unchanged every time.
+
+**Step 4 — Contrast with the existing correct behavior for a *missing* signature**, to isolate exactly what's different:
+```python
+assistant_message = {
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": "call_xyz789", "type": "function", "function": {"name": "get_weather", "arguments": '{"location": "Boston"}'}}],
+}
+gemini_parts = convert_to_gemini_tool_call_invoke(message=assistant_message, model="gemini-3-pro-preview", custom_llm_provider="gemini")
+print(gemini_parts[0].get("thoughtSignature"))
+```
+Output: `c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=` — this base64-decodes to `skip_thought_signature_validator`, the documented Google placeholder. **This is the correct behavior LiteLLM already has for a missing signature.** The bug is that this exact substitution never triggers for a foreign (present-but-wrong-endpoint) signature.
+
+**Step 5 — Confirm the fallback handler has zero provider awareness:**
+```bash
+grep -n "custom_llm_provider" litellm/router_utils/fallback_event_handlers.py
+```
+Output: 0 matches. `run_async_fallback()` swaps `kwargs["model"]` but never inspects which provider the original or fallback deployment belongs to, confirming there is currently no mechanism anywhere in the fallback path that could even detect a provider-boundary crossing.
 
 ### Reproduction Evidence
 
-- **Commit showing reproduction:** [Link to commit in your fork]
-- **Screenshots/logs:** [If applicable]
-- **My findings:** [What you discovered during reproduction]
+- **Working branch:** https://github.com/mathew-felix/litellm/tree/fix-issue-32140
+- **Bug location:** [`litellm/litellm_core_utils/prompt_templates/factory.py`](https://github.com/mathew-felix/litellm/blob/fix-issue-32140/litellm/litellm_core_utils/prompt_templates/factory.py) — `_get_thought_signature_from_tool()` (lines 1207-1250) and `convert_to_gemini_tool_call_invoke()` (lines 1266-1374)
+- **Baseline test run:** `pytest tests/test_litellm/llms/vertex_ai/gemini/test_thought_signature_in_tool_call_id.py -v` — all 11 existing tests pass, confirming the missing-signature path is correctly covered and the codebase is in a clean, buggy-but-working state before any fix
+- **My findings:** The dummy-signature substitution mechanism (`_get_dummy_thought_signature()`) already exists and is correctly wired for the "signature absent" case. It just needs to also trigger for the "signature present but from the wrong provider" case. No new mechanism needs to be invented — the fix is extending an existing, tested code path.
 
 ---
 
@@ -65,30 +142,33 @@ The codebase already has this exact substitution mechanism, but only for the cas
 
 ### Analysis
 
-[Your analysis of the root cause - what's causing the issue?]
+**Root cause:** `_get_thought_signature_from_tool()` in `litellm/litellm_core_utils/prompt_templates/factory.py` extracts whatever thought signature it finds (from `provider_specific_fields` or embedded in the tool call ID) and returns it unconditionally — it has no parameter telling it which provider originally minted the signature versus which provider the request is about to be sent to. Separately, `run_async_fallback()` in `litellm/router_utils/fallback_event_handlers.py` performs the provider switch but never reads `custom_llm_provider` from either the original or fallback deployment, so the information needed to detect a boundary crossing is discarded before it ever reaches the signature-extraction code.
 
 ### Proposed Solution
 
-[High-level description of your fix approach]
+Thread the *origin* provider through to `_get_thought_signature_from_tool()` / `convert_to_gemini_tool_call_invoke()` alongside the *target* provider that's already passed in as `custom_llm_provider`. When the origin and target providers differ across the `vertex_ai` <-> `gemini` boundary, treat the signature as if it were missing and fall through to the existing `_get_dummy_thought_signature()` substitution, instead of returning the foreign value.
 
 ### Implementation Plan
 
 Using UMPIRE framework (adapted):
 
-**Understand:** [Restate the problem]
+**Understand:** LiteLLM's Router silently replays a Gemini thought signature minted by one endpoint (Vertex AI or Google AI Studio) to the other endpoint during automatic fallback. The target endpoint rejects the foreign signature, so the fallback itself fails with an HTTP 400 instead of recovering. The fix must detect the provider-boundary crossing and substitute the same dummy placeholder value LiteLLM already uses for missing signatures.
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+**Match:** `_get_dummy_thought_signature()` and its call sites in `convert_to_gemini_tool_call_invoke()` (factory.py lines 1332-1334 and 1356-1358) are the exact pattern to extend — they already know how to produce and insert the placeholder value; they just need a reason to trigger on "foreign" in addition to "missing." `VertexGeminiConfig._is_gemini_3_or_newer()` and `custom_llm_provider` string comparisons (`"vertex_ai"` vs `"gemini"`) are the existing provider-detection primitives already used elsewhere in `vertex_and_google_ai_studio_gemini.py` and can be reused rather than reinvented.
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Plan:**
+1. Determine where the *origin* provider of a thought signature can be captured — most likely by storing `custom_llm_provider` alongside the signature in `provider_specific_fields` at the point the signature is first received from a provider response, so it travels with the signature through the conversation history
+2. Update `_get_thought_signature_from_tool()` to accept the *target* `custom_llm_provider` (already available in `convert_to_gemini_tool_call_invoke()`'s signature) and compare it against the signature's recorded origin provider
+3. When origin and target providers differ across the `vertex_ai` <-> `gemini` boundary, skip returning the found signature and fall through to `_get_dummy_thought_signature()`, exactly as the missing-signature case already does
+4. Update `convert_to_gemini_tool_call_invoke()`'s two call sites (tool_calls loop and function_call branch) to pass the target provider through to the updated extraction function
+5. Extend `tests/test_litellm/llms/vertex_ai/gemini/test_thought_signature_in_tool_call_id.py` with a new test case covering: signature minted by `vertex_ai`, target provider `gemini` (and the reverse direction), asserting the dummy placeholder is substituted rather than the foreign signature
+6. Run `make test-unit`, `make lint`, and `make pre-commit` per CONTRIBUTING.md before opening the PR
 
-**Implement:** [Link to your branch/commits as you work]
+**Implement:** https://github.com/mathew-felix/litellm/tree/fix-issue-32140 (implementation in Phase III)
 
-**Review:** [Self-review checklist - does it follow the project's contribution guidelines?]
+**Review:** Will check against LiteLLM's CONTRIBUTING.md and CLAUDE.md conventions: PR base branch must be `litellm_internal_staging` not `main`, at least one meaningful regression test is required for backend PRs, `make lint` and `make pre-commit` must pass, commit messages follow Conventional Commits, and the PR description must follow `.github/pull_request_template.md` including requesting a Greptile review before requesting a maintainer review.
 
-**Evaluate:** [How will you verify it works?]
+**Evaluate:** Will run `make test-unit` (existing suite must still pass, 11/11 baseline), run the new regression test added for the vertex_ai <-> gemini boundary case, and re-run the exact reproduction script from Step 2 above to confirm the dummy placeholder is substituted instead of the foreign signature after the fix lands.
 
 ---
 
