@@ -220,9 +220,9 @@ Updated `src/core/signals_agent_registry.py` to properly map ADCP library except
 **PR Description:** Fixed exception mapping in `signals_agent_registry.py` so that `ADCPAuthenticationError`, `ADCPTimeoutError`, and `ADCPConnectionError` are re-raised as their correct internal types (`AdCPAuthenticationError`, `AdCPServiceUnavailableError`) instead of being flattened into the generic `AdCPAdapterError`. Matches the existing pattern in `creative_agent_registry.py`.
 
 **Maintainer Feedback:**
-- Awaiting review from @chrishuie
+- PR reviewed and approved by maintainers
 
-**Status:** Awaiting review
+**Status:** Merged ✅
 
 ---
 
