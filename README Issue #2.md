@@ -3,7 +3,7 @@
 **Contribution Number:** 2  
 **Student:** Felix Mathew  
 **Issue:** https://github.com/BerriAI/litellm/issues/32140  
-**Status:** Phase II Complete
+**Status:** Phase III Complete
 
 ---
 
@@ -164,11 +164,13 @@ Using UMPIRE framework (adapted):
 5. Extend `tests/test_litellm/llms/vertex_ai/gemini/test_thought_signature_in_tool_call_id.py` with a new test case covering: signature minted by `vertex_ai`, target provider `gemini` (and the reverse direction), asserting the dummy placeholder is substituted rather than the foreign signature
 6. Run `make test-unit`, `make lint`, and `make pre-commit` per CONTRIBUTING.md before opening the PR
 
-**Implement:** https://github.com/mathew-felix/litellm/tree/fix-issue-32140 (implementation in Phase III)
+**Implement:** https://github.com/mathew-felix/litellm/tree/fix-issue-32140 — commit [`3e37a4d`](https://github.com/mathew-felix/litellm/commit/3e37a4dfe7)
+
+**Plan revision (discovered during Phase III):** The original Phase II plan proposed threading the origin provider through `_get_thought_signature_from_tool()`. Re-reading the full issue body before implementing (I had only summarized excerpts during Phase I/II research) revealed two important details I'd missed: (1) the signature travels through **two separate channels** — the tool call's `provider_specific_fields` dict, and separately embedded in the tool call ID suffix — and my original plan only addressed the extraction function, not both channels; (2) the issue explicitly states "the Router itself knows about this boundary — it has both deployments' `custom_llm_provider`s in hand," pointing at `run_async_fallback()` in `litellm/router_utils/fallback_event_handlers.py` as the natural fix location, since it is the one place that already knows both the original and fallback deployment. I revised the plan to fix it there instead: strip the foreign signature from both channels before the fallback request is sent, reusing the existing dummy-substitution logic (`_get_dummy_thought_signature()`) naturally, since a stripped signature is indistinguishable from a genuinely missing one.
 
 **Review:** Will check against LiteLLM's CONTRIBUTING.md and CLAUDE.md conventions: PR base branch must be `litellm_internal_staging` not `main`, at least one meaningful regression test is required for backend PRs, `make lint` and `make pre-commit` must pass, commit messages follow Conventional Commits, and the PR description must follow `.github/pull_request_template.md` including requesting a Greptile review before requesting a maintainer review.
 
-**Evaluate:** Will run `make test-unit` (existing suite must still pass, 11/11 baseline), run the new regression test added for the vertex_ai <-> gemini boundary case, and re-run the exact reproduction script from Step 2 above to confirm the dummy placeholder is substituted instead of the foreign signature after the fix lands.
+**Evaluate:** Ran `make test-unit`-equivalent targeted suites (existing 11/11 baseline in `test_thought_signature_in_tool_call_id.py` still passes), ran the 8 new regression tests covering the boundary detection and stripping logic, ran `make lint` and `make pre-commit` (both pass with zero new violations after fixing two lint findings), and re-ran the reproduction script through the actual fix function to confirm the dummy placeholder is now substituted instead of the foreign signature.
 
 ---
 
@@ -176,26 +178,44 @@ Using UMPIRE framework (adapted):
 
 ### Unit Tests
 
-- [ ] Test case 1: [Description]
-- [ ] Test case 2: [Description]
-- [ ] Test case 3: [Description]
+- [x] `test_run_async_fallback_strips_foreign_thought_signature_across_gemini_boundary` — a fallback from `vertex_ai` to `gemini` strips the foreign signature from both `provider_specific_fields` and the tool call ID
+- [x] `test_run_async_fallback_does_not_strip_signature_within_same_provider` — a fallback between two `vertex_ai` deployments never strips (no boundary crossed), proving the fix doesn't over-apply
+- [x] `TestCrossesGeminiEndpointBoundary` (3 cases) — boundary detection returns true only when both providers are in `{vertex_ai, gemini}` and they differ
+- [x] `TestGetModelGroupCustomLlmProvider` (3 cases) — provider lookup uses the explicit `custom_llm_provider` field when present, falls back to inferring from the model string prefix, and returns `None` gracefully when a model group has no registered deployments
+- [x] `TestRemoveForeignThoughtSignaturesFromMessages` (4 cases) — the stripping helper removes `thought_signature` from `provider_specific_fields` and the ID suffix, leaves unrelated `provider_specific_fields` entries untouched, does not mutate the caller's original message/tool_call objects, and passes through non-tool-call messages unchanged
 
 ### Integration Tests
 
-- [ ] Integration scenario 1
-- [ ] Integration scenario 2
+Not applicable — this bug is entirely reproducible and verifiable at the unit level (pure message transformation and Router bookkeeping logic), no live API calls or database required.
 
 ### Manual Testing
 
-[What you tested manually and results]
+Re-ran the exact reproduction script from the Reproduction Process section, replacing the raw `convert_to_gemini_tool_call_invoke()` call with the full fix path (`_remove_foreign_thought_signatures_from_messages` -> `convert_to_gemini_tool_call_invoke`). Confirmed the `thoughtSignature` sent to the new endpoint changed from the foreign Vertex-minted value to the documented dummy placeholder (`c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=`, which decodes to `skip_thought_signature_validator`).
 
 ---
 
 ## Implementation Notes
 
-### Week [X] Progress
+### Week 1 Progress
 
-[What you built this week, challenges faced, decisions made]
+**What I built:**
+
+Added provider-boundary detection and foreign-signature stripping to LiteLLM's Router fallback path, so a Gemini thought signature minted by one endpoint (Vertex AI or Google AI Studio) is never replayed to the other endpoint during an automatic fallback.
+
+**Files modified:**
+- `litellm/router_utils/fallback_event_handlers.py` — added `_get_model_group_custom_llm_provider()` (looks up a model group's deployment provider, preferring the explicit `custom_llm_provider` field and falling back to inference from the model string) and `_crosses_gemini_endpoint_boundary()` (true only when both providers are in `{vertex_ai, gemini}` and differ); wired both into `run_async_fallback()` to strip foreign signatures from `kwargs["messages"]` before the fallback call is made
+- `litellm/utils.py` — added `_remove_foreign_thought_signature_from_tool_call()` and `_remove_foreign_thought_signatures_from_messages()`, colocated next to the existing sibling function `_remove_thought_signatures_from_messages()` used by PR #18374's non-Gemini stripping logic
+- `tests/test_litellm/router_utils/test_fallback_event_handlers.py` — 8 new tests (2 end-to-end through `run_async_fallback`, 3 for the boundary-detection helper, 3 for the provider-lookup helper)
+- `tests/test_litellm/test_utils.py` — 4 new tests for the message-stripping helper
+
+**Key commit:** [`3e37a4d`](https://github.com/mathew-felix/litellm/commit/3e37a4dfe7) — fix(router): strip foreign Gemini thought signatures on vertex_ai/gemini fallback
+
+**Challenges faced:**
+- My Phase II plan was based on an incomplete read of the issue (I had only summarized excerpts from earlier research). Re-reading the full issue text at the start of Phase III revealed the bug has two distinct signature-replay channels and that the issue itself points at the Router as the correct fix location — I revised the implementation approach accordingly rather than force-fitting the original, narrower plan
+- Hit two lint failures from LiteLLM's ratcheting `ruff-strict-budget.json` gate: a new `BLE001` (blind `except Exception`) and two new `UP006` (`List` vs `list`) violations. Fixed by narrowing to lowercase `list` type hints (matching modern PEP 585 style) and adding a `# noqa: BLE001` with a reason comment for the intentionally best-effort provider lookup, matching the project's own established pattern (`except Exception: ... # noqa: BLE001` appears elsewhere in the codebase)
+- `make format` also reformatted an unrelated file (`credential_migration.py`) that I hadn't touched — reverted it with `git checkout --` to keep the diff scoped to only the files relevant to this issue
+
+**Scope decision:** The issue describes thought signatures leaking through two channels: the tool call ID/`provider_specific_fields` (which I fixed) and `thinking_blocks[].signature` on plain assistant text messages (which I did not touch). I scoped the PR to the tool-call channel only, per LiteLLM's own PR checklist ("isolated as possible; it only solves 1 specific problem") and because it is the channel with existing test coverage to build on. I noted the `thinking_blocks` channel as an explicit follow-up in the PR description rather than silently leaving it unfixed.
 
 ### Week [Y] Progress
 
