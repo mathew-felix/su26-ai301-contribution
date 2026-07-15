@@ -3,7 +3,7 @@
 **Contribution Number:** 2  
 **Student:** Felix Mathew  
 **Issue:** https://github.com/BerriAI/litellm/issues/32140  
-**Status:** Phase III Complete
+**Status:** Phase IV Complete
 
 ---
 
@@ -217,29 +217,18 @@ Added provider-boundary detection and foreign-signature stripping to LiteLLM's R
 
 **Scope decision:** The issue describes thought signatures leaking through two channels: the tool call ID/`provider_specific_fields` (which I fixed) and `thinking_blocks[].signature` on plain assistant text messages (which I did not touch). I scoped the PR to the tool-call channel only, per LiteLLM's own PR checklist ("isolated as possible; it only solves 1 specific problem") and because it is the channel with existing test coverage to build on. I noted the `thinking_blocks` channel as an explicit follow-up in the PR description rather than silently leaving it unfixed.
 
-### Week [Y] Progress
-
-[Continue documenting as you work]
-
-### Code Changes
-
-- **Files modified:** [List]
-- **Key commits:** [Links to important commits]
-- **Approach decisions:** [Why you chose certain approaches]
-
 ---
 
 ## Pull Request
 
-**PR Link:** [GitHub PR URL when submitted]
+**PR Link:** https://github.com/BerriAI/litellm/pull/33471
 
-**PR Description:** [Draft or final PR description - much of the content above can be adapted]
+**PR Description:** Fixed the Router's fallback path so a Gemini thought signature minted by one endpoint (Vertex AI or Google AI Studio) is never replayed to the other endpoint. `run_async_fallback()` now detects when a fallback crosses the `vertex_ai` <-> `gemini` boundary and strips the foreign signature from both channels it can travel in (`provider_specific_fields` and the tool call ID suffix), so the receiving endpoint treats it as missing and fills in its own dummy placeholder instead of rejecting the request with a 400 error. The PR is explicitly scoped to the tool-call channel; the `thinking_blocks[].signature` channel on plain assistant text messages is noted as an out-of-scope follow-up.
 
 **Maintainer Feedback:**
-- [Date]: [Summary of feedback received]
-- [Date]: [How you addressed it]
+- Awaiting review (requested a Greptile automated review per LiteLLM's PR checklist)
 
-**Status:** [Awaiting review / Iterating / Approved / Merged]
+**Status:** Awaiting review
 
 ---
 
@@ -247,15 +236,21 @@ Added provider-boundary detection and foreign-signature stripping to LiteLLM's R
 
 ### Technical Skills Gained
 
-[What you learned technically]
+- Learned how a token that looks like an ordinary ID or metadata field can carry hidden protocol-level constraints (Gemini's thought signatures being endpoint-bound), and how to trace that constraint through a codebase to find every place it needs to be respected
+- Practiced reading an issue report closely enough to catch details missed on a first pass; my Phase II plan was based on an incomplete read, and re-reading the full issue text before implementing changed my fix location entirely
+- Got hands-on with a large open source project's ratcheting lint budget system (`ruff-strict-budget.json`), which enforces that new code cannot silently add technical debt even when the surrounding codebase already has some
+- Practiced keeping a PR's diff strictly scoped to one file set, including catching and reverting an unrelated file that an auto-formatter touched
 
 ### Challenges Overcome
 
-[What was hard and how you solved it]
+- Discovered mid-implementation that my Phase II plan targeted the wrong layer of the codebase. Fixed by re-reading the full issue text, finding the actual two signature-replay channels, and revising the plan to fix it at the Router level instead, exactly where the issue itself said the fix belonged
+- Hit two new lint violations against the project's strict ratcheting gate (a blind `except Exception` and two legacy `List` type hints). Resolved by matching the codebase's existing suppression convention (`# noqa: BLE001` with a reason) and switching to modern `list` type hints
+- Had no live Vertex AI / Google AI Studio credentials to produce a curl-based proof of fix (the maintainer's stated preference in `CLAUDE.md`). Was transparent about this limitation in the PR description rather than fabricating output, and relied on unit-level verification instead
 
 ### What I'd Do Differently Next Time
 
-[Reflection on your process]
+- Read the full issue text carefully before writing the Phase II plan, rather than relying on summarized research notes gathered during issue selection
+- Check the project's lint/format tooling behavior (`make format` reformatting unrelated files) earlier in the process, before staging changes, to avoid an extra cleanup step
 
 ---
 
