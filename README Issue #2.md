@@ -183,6 +183,11 @@ Using UMPIRE framework (adapted):
 - [x] `TestCrossesGeminiEndpointBoundary` (3 cases) — boundary detection returns true only when both providers are in `{vertex_ai, gemini}` and they differ
 - [x] `TestGetModelGroupCustomLlmProvider` (3 cases) — provider lookup uses the explicit `custom_llm_provider` field when present, falls back to inferring from the model string prefix, and returns `None` gracefully when a model group has no registered deployments
 - [x] `TestRemoveForeignThoughtSignaturesFromMessages` (4 cases) — the stripping helper removes `thought_signature` from `provider_specific_fields` and the ID suffix, leaves unrelated `provider_specific_fields` entries untouched, does not mutate the caller's original message/tool_call objects, and passes through non-tool-call messages unchanged
+- [x] (added after review feedback) `test_strips_matching_tool_response_id_so_it_still_pairs_with_the_tool_call` and `test_ignores_tool_messages_without_a_signature_suffix` — the matching `role="tool"` message's `tool_call_id` is stripped in lockstep with the assistant's `tool_calls[].id`, so the two stay paired after a boundary crossing
+- [x] (added after review feedback) `test_true_between_vertex_ai_beta_and_gemini` — the boundary check also fires for the `vertex_ai_beta` provider string, not just `vertex_ai`
+- [x] (added after review feedback) `test_run_async_fallback_looks_up_original_provider_only_once_across_candidates` — the original model group's provider is looked up exactly once even when the fallback loop iterates over multiple candidates
+
+**Total: 12 new tests, 258 tests passing across the touched test files.**
 
 ### Integration Tests
 
@@ -217,6 +222,24 @@ Added provider-boundary detection and foreign-signature stripping to LiteLLM's R
 
 **Scope decision:** The issue describes thought signatures leaking through two channels: the tool call ID/`provider_specific_fields` (which I fixed) and `thinking_blocks[].signature` on plain assistant text messages (which I did not touch). I scoped the PR to the tool-call channel only, per LiteLLM's own PR checklist ("isolated as possible; it only solves 1 specific problem") and because it is the channel with existing test coverage to build on. I noted the `thinking_blocks` channel as an explicit follow-up in the PR description rather than silently leaving it unfixed.
 
+### Week 2 Progress
+
+**What I built:**
+
+Responded to Greptile's automated review feedback on the PR with a follow-up commit fixing two real correctness gaps and one performance suggestion it identified.
+
+**Files modified (same 4 as Week 1, additional changes):**
+- `litellm/utils.py` — `_remove_foreign_thought_signatures_from_messages()` now also strips the matching `tool_call_id` on `role="tool"` messages, not just the assistant's `tool_calls[].id`; previously the two would go out of sync after stripping, since only one side of the pair was touched
+- `litellm/router_utils/fallback_event_handlers.py` — added `vertex_ai_beta` to `_GEMINI_ENDPOINT_PROVIDERS`; moved the original model group's provider lookup out of the fallback loop since `original_model_group` never changes across fallback candidates
+- `tests/test_litellm/test_utils.py` — 2 new tests covering the tool-response stripping fix
+- `tests/test_litellm/router_utils/test_fallback_event_handlers.py` — 2 new tests, one for the `vertex_ai_beta` boundary case and one proving the provider lookup happens exactly once across a multi-candidate fallback chain
+
+**Key commit:** [`523a2b2`](https://github.com/mathew-felix/litellm/commit/523a2b2907) — fix(router): address review feedback on Gemini thought signature stripping
+
+**Challenges faced:**
+- My initial loop-hoist fix (moving the provider lookup outside the loop) introduced a real regression on its first attempt: I hoisted the call unconditionally, but the original code only made that call when `messages` was present in `kwargs`, so router test doubles without a `get_model_list` method (used by tests unrelated to this feature) started failing with `AttributeError`. Caught it immediately because I ran the full test suite before committing, not just the new tests, and fixed it by guarding the hoisted lookup with the same `isinstance(messages, list)` condition the original code used
+- Learned that Greptile's two initial "reviews" on the PR are separate from its "comments"; its detailed writeup and confidence score are posted as issue comments, while formal GitHub review objects it creates for inline comments can have an empty body. This mattered when trying to check the bot's response to a follow-up `@greptileai` mention, since the comment feed and the review feed needed to be checked separately to get the full picture
+
 ---
 
 ## Pull Request
@@ -226,9 +249,10 @@ Added provider-boundary detection and foreign-signature stripping to LiteLLM's R
 **PR Description:** Fixed the Router's fallback path so a Gemini thought signature minted by one endpoint (Vertex AI or Google AI Studio) is never replayed to the other endpoint. `run_async_fallback()` now detects when a fallback crosses the `vertex_ai` <-> `gemini` boundary and strips the foreign signature from both channels it can travel in (`provider_specific_fields` and the tool call ID suffix), so the receiving endpoint treats it as missing and fills in its own dummy placeholder instead of rejecting the request with a 400 error. The PR is explicitly scoped to the tool-call channel; the `thinking_blocks[].signature` channel on plain assistant text messages is noted as an out-of-scope follow-up.
 
 **Maintainer Feedback:**
-- Awaiting review (requested a Greptile automated review per LiteLLM's PR checklist)
+- 2026-07-15: Requested a Greptile automated review (`@greptileai`) per LiteLLM's PR checklist. Greptile's first pass came back with a confidence score of 3/5 and flagged two correctness gaps: (1) the signature-stripping logic only processed `role="assistant"` tool calls, not the matching `role="tool"` response's `tool_call_id`, leaving the two IDs mismatched after stripping; (2) `vertex_ai_beta`, a distinct provider string used elsewhere in the codebase, was missing from the boundary-detection set. It also suggested a minor performance fix (hoisting a provider lookup out of a loop) and raised an architectural question about whether the logic belonged in `router_utils/` versus `llms/`.
+- 2026-07-20: Pushed a follow-up commit fixing both correctness gaps and the performance suggestion, added 4 new regression tests (258 total passing), and replied to each of Greptile's 5 inline comments individually, including pushing back respectfully on the architecture suggestion with a technical reason (the boundary check needs both deployments' provider at once, which only the Router has visibility into). Re-requested a Greptile review; Greptile's second pass on the original round had already raised its score to 4/5 ("safe to merge, purely additive, no existing call sites changed") before this round of fixes even landed.
 
-**Status:** Awaiting review
+**Status:** Awaiting review (fixes for first review round pushed; awaiting maintainer or updated bot review)
 
 ---
 
@@ -240,6 +264,7 @@ Added provider-boundary detection and foreign-signature stripping to LiteLLM's R
 - Practiced reading an issue report closely enough to catch details missed on a first pass; my Phase II plan was based on an incomplete read, and re-reading the full issue text before implementing changed my fix location entirely
 - Got hands-on with a large open source project's ratcheting lint budget system (`ruff-strict-budget.json`), which enforces that new code cannot silently add technical debt even when the surrounding codebase already has some
 - Practiced keeping a PR's diff strictly scoped to one file set, including catching and reverting an unrelated file that an auto-formatter touched
+- Learned to respond to automated code review feedback professionally: fix what's genuinely correct (the two real bugs Greptile found), push back respectfully with technical reasoning where I disagreed (the `llms/` vs `router_utils/` architecture suggestion), and verify my own fix for the feedback didn't introduce a new regression before committing it
 
 ### Challenges Overcome
 
