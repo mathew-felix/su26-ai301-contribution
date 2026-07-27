@@ -240,6 +240,25 @@ Responded to Greptile's automated review feedback on the PR with a follow-up com
 - My initial loop-hoist fix (moving the provider lookup outside the loop) introduced a real regression on its first attempt: I hoisted the call unconditionally, but the original code only made that call when `messages` was present in `kwargs`, so router test doubles without a `get_model_list` method (used by tests unrelated to this feature) started failing with `AttributeError`. Caught it immediately because I ran the full test suite before committing, not just the new tests, and fixed it by guarding the hoisted lookup with the same `isinstance(messages, list)` condition the original code used
 - Learned that Greptile's two initial "reviews" on the PR are separate from its "comments"; its detailed writeup and confidence score are posted as issue comments, while formal GitHub review objects it creates for inline comments can have an empty body. This mattered when trying to check the bot's response to a follow-up `@greptileai` mention, since the comment feed and the review feed needed to be checked separately to get the full picture
 
+### Week 3 Progress
+
+**What I built:**
+
+Resolved a merge conflict against the real upstream base branch, which had advanced 50 commits since I opened the PR.
+
+**What happened:**
+- GitHub reported "This branch has conflicts that must be resolved" in `tests/test_litellm/test_utils.py`. Added the real `BerriAI/litellm` repo as an `upstream` git remote (I had only been working against my own fork's `origin`, which was stale) and rebased my branch onto the current `upstream/litellm_internal_staging`
+- Both conflicts were simple append conflicts: upstream had added new test classes to the end of the same file I was appending to. Resolved by keeping both sets of tests, no actual logic conflict
+- The rebase pulled in a newer lint rule (`UP045`, preferring `str | None` over `Optional[str]`) that didn't exist when I last ran `make lint`. Updated my two function signatures to match
+- Synced my fork's `litellm_internal_staging` branch to match upstream so my own lint gate compared against the correct base, then re-ran `make lint`, `make pre-commit`, and the full test suite (284 tests passing, up from 258 since the rebase pulled in new upstream tests too) before force-pushing the rebased branch
+
+**Key commit:** [`bda6e9a`](https://github.com/mathew-felix/litellm/commit/bda6e9acfc) — same fix, rebased onto current upstream and updated for the new lint rule
+
+**Challenges faced:**
+- Syncing my fork's base branch to match upstream triggered my fork's own copy of LiteLLM's CI workflows, including an `OSV Scan` security check, which failed and sent me an email notification. Confirmed this was unrelated to the PR itself (the actual PR's `OSV Scan` check against the real repo passed in 9 seconds) — forks commonly lack the repository secrets these scans need, so a scan failing only on my fork's own branch push is expected and not something to fix
+
+**Current CI status:** All 77 checks on the PR pass (lint, full unit test matrix, UI build, security scans, no performance regression per CodSpeed). The only remaining blocker to merge is "At least 1 approving review is required by reviewers with write access", which is a normal wait, not an action item.
+
 ---
 
 ## Pull Request
@@ -251,8 +270,9 @@ Responded to Greptile's automated review feedback on the PR with a follow-up com
 **Maintainer Feedback:**
 - 2026-07-15: Requested a Greptile automated review (`@greptileai`) per LiteLLM's PR checklist. Greptile's first pass came back with a confidence score of 3/5 and flagged two correctness gaps: (1) the signature-stripping logic only processed `role="assistant"` tool calls, not the matching `role="tool"` response's `tool_call_id`, leaving the two IDs mismatched after stripping; (2) `vertex_ai_beta`, a distinct provider string used elsewhere in the codebase, was missing from the boundary-detection set. It also suggested a minor performance fix (hoisting a provider lookup out of a loop) and raised an architectural question about whether the logic belonged in `router_utils/` versus `llms/`.
 - 2026-07-20: Pushed a follow-up commit fixing both correctness gaps and the performance suggestion, added 4 new regression tests (258 total passing), and replied to each of Greptile's 5 inline comments individually, including pushing back respectfully on the architecture suggestion with a technical reason (the boundary check needs both deployments' provider at once, which only the Router has visibility into). Re-requested a Greptile review; Greptile's second pass on the original round had already raised its score to 4/5 ("safe to merge, purely additive, no existing call sites changed") before this round of fixes even landed.
+- 2026-07-20 (later): GitHub reported a merge conflict against the base branch, which had advanced 50 commits since the PR was opened. Rebased onto the current upstream base, resolved two non-conflicting append conflicts in the shared test file, fixed one new lint rule the rebase surfaced, and force-pushed. All 77 CI checks now pass (lint, full unit matrix, security scans, UI build, no performance regression).
 
-**Status:** Awaiting review (fixes for first review round pushed; awaiting maintainer or updated bot review)
+**Status:** CI-clean, awaiting maintainer approval ("At least 1 approving review is required by reviewers with write access" — no outstanding correctness issues, purely a wait for a human reviewer)
 
 ---
 
@@ -265,6 +285,7 @@ Responded to Greptile's automated review feedback on the PR with a follow-up com
 - Got hands-on with a large open source project's ratcheting lint budget system (`ruff-strict-budget.json`), which enforces that new code cannot silently add technical debt even when the surrounding codebase already has some
 - Practiced keeping a PR's diff strictly scoped to one file set, including catching and reverting an unrelated file that an auto-formatter touched
 - Learned to respond to automated code review feedback professionally: fix what's genuinely correct (the two real bugs Greptile found), push back respectfully with technical reasoning where I disagreed (the `llms/` vs `router_utils/` architecture suggestion), and verify my own fix for the feedback didn't introduce a new regression before committing it
+- Learned to rebase a long-lived branch onto a fast-moving upstream base: the fork I was comparing my own lint gate against had gone stale, which made a routine rebase temporarily look like it introduced dozens of violations that were actually just unrelated upstream commits my fork hadn't caught up on yet
 
 ### Challenges Overcome
 
