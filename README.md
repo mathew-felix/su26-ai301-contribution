@@ -10,6 +10,7 @@ A running log of all open source contributions completed as part of the CodePath
 |---|---------|-------|------|--------|----|
 | 1 | [prebid/salesagent](https://github.com/prebid/salesagent) | [#1433 — map ADCP exceptions to specific types in signals_agent_registry](https://github.com/prebid/salesagent/issues/1433) | Bug Fix | Merged ✅ | [#1483](https://github.com/prebid/salesagent/pull/1483) |
 | 2 | [BerriAI/litellm](https://github.com/BerriAI/litellm) | [#32140 — Router fallback between vertex_ai and gemini replays endpoint-bound thought signatures](https://github.com/BerriAI/litellm/issues/32140) | Bug Fix | Phase IV Complete (CI-clean, awaiting maintainer approval) | [#33471](https://github.com/BerriAI/litellm/pull/33471) |
+| 3 | [BerriAI/litellm](https://github.com/BerriAI/litellm) | [#35011 — prompt_cache_min_tokens: four claude-fable-5 keys disagree with the direct entry, and 499 entries that claim caching support record no minimum at all](https://github.com/BerriAI/litellm/issues/35011) | Bug Fix | Phase I In Progress | TBD |
 
 ---
 
@@ -27,3 +28,4 @@ A running log of all open source contributions completed as part of the CodePath
 
 - [Contribution #1 — prebid/salesagent #1433](README%20Issue%20%231.md)
 - [Contribution #2 — BerriAI/litellm #32140](README%20Issue%20%232.md)
+- [Contribution #3 — BerriAI/litellm #35011](README%20Issue%20%233.md)
