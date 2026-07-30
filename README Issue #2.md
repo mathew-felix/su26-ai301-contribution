@@ -186,8 +186,10 @@ Using UMPIRE framework (adapted):
 - [x] (added after review feedback) `test_strips_matching_tool_response_id_so_it_still_pairs_with_the_tool_call` and `test_ignores_tool_messages_without_a_signature_suffix` — the matching `role="tool"` message's `tool_call_id` is stripped in lockstep with the assistant's `tool_calls[].id`, so the two stay paired after a boundary crossing
 - [x] (added after review feedback) `test_true_between_vertex_ai_beta_and_gemini` — the boundary check also fires for the `vertex_ai_beta` provider string, not just `vertex_ai`
 - [x] (added after review feedback) `test_run_async_fallback_looks_up_original_provider_only_once_across_candidates` — the original model group's provider is looked up exactly once even when the fallback loop iterates over multiple candidates
+- [x] (added for Codecov patch coverage) `test_returns_none_when_deployment_has_no_model_to_infer_from` and `test_returns_none_when_provider_cannot_be_inferred_from_model_string` — the two early-return branches in the provider lookup when there is nothing to infer from
+- [x] (added for Codecov patch coverage) `test_strips_signature_from_a_pydantic_message_object`, `test_passes_through_a_message_that_is_neither_dict_nor_pydantic`, `test_strips_signature_from_a_pydantic_tool_call_object_inside_a_dict_message`, `test_passes_through_a_tool_call_that_is_neither_dict_nor_pydantic` — real `Message`/`ChatCompletionMessageToolCall` Pydantic objects and non-dict/non-Pydantic pass-through values, not just plain dicts
 
-**Total: 12 new tests, 258 tests passing across the touched test files.**
+**Total: 18 new tests, 290 tests passing across the touched test files. Patch coverage gap (9 lines) fully closed.**
 
 ### Integration Tests
 
@@ -259,6 +261,26 @@ Resolved a merge conflict against the real upstream base branch, which had advan
 
 **Current CI status:** All 77 checks on the PR pass (lint, full unit test matrix, UI build, security scans, no performance regression per CodSpeed). The only remaining blocker to merge is "At least 1 approving review is required by reviewers with write access", which is a normal wait, not an action item.
 
+### Week 4 Progress
+
+**What I built:**
+
+Closed a code coverage gap flagged by Codecov's automated PR check.
+
+**What happened:**
+- Codecov reported patch coverage of 86.15%, with 9 lines in the diff missing test coverage: 6 in `litellm/utils.py`, 3 in `litellm/router_utils/fallback_event_handlers.py`
+- Rather than guessing, I computed the exact new-file line numbers for every line I added (by parsing the diff hunks against the real upstream base) and intersected that with a local `pytest --cov --cov-report=term-missing` run scoped to just the two touched files. The intersection matched Codecov's reported counts exactly (6 and 3), confirming I had the right 9 lines before writing a single test
+- The 9 lines were two categories: (1) two early-return branches in `_get_model_group_custom_llm_provider` — a deployment with no model string to infer a provider from, and `get_llm_provider` raising for a genuinely unrecognized model string; (2) four branches in `_remove_foreign_thought_signatures_from_messages` handling real Pydantic `Message`/`ChatCompletionMessageToolCall` objects (not just plain dicts) and passing through values that are neither dicts nor Pydantic models unchanged
+- Added 6 new tests using the codebase's real `Message` and `ChatCompletionMessageToolCall` types rather than synthetic mocks, so the tests exercise the same object shapes production code actually receives
+
+**Files modified:**
+- `tests/test_litellm/router_utils/test_fallback_event_handlers.py` — 2 new tests for the provider-lookup early-return branches
+- `tests/test_litellm/test_utils.py` — 4 new tests for the Pydantic-object and pass-through branches
+
+**Key commit:** [`df504c4`](https://github.com/mathew-felix/litellm/commit/df504c49af) — test: cover remaining branches flagged by Codecov patch coverage
+
+**Verification:** Re-ran the same coverage command after adding the tests; all 9 previously-listed line numbers no longer appear in the missing-lines output for either file. Full suite: 290 tests passing.
+
 ---
 
 ## Pull Request
@@ -271,8 +293,9 @@ Resolved a merge conflict against the real upstream base branch, which had advan
 - 2026-07-15: Requested a Greptile automated review (`@greptileai`) per LiteLLM's PR checklist. Greptile's first pass came back with a confidence score of 3/5 and flagged two correctness gaps: (1) the signature-stripping logic only processed `role="assistant"` tool calls, not the matching `role="tool"` response's `tool_call_id`, leaving the two IDs mismatched after stripping; (2) `vertex_ai_beta`, a distinct provider string used elsewhere in the codebase, was missing from the boundary-detection set. It also suggested a minor performance fix (hoisting a provider lookup out of a loop) and raised an architectural question about whether the logic belonged in `router_utils/` versus `llms/`.
 - 2026-07-20: Pushed a follow-up commit fixing both correctness gaps and the performance suggestion, added 4 new regression tests (258 total passing), and replied to each of Greptile's 5 inline comments individually, including pushing back respectfully on the architecture suggestion with a technical reason (the boundary check needs both deployments' provider at once, which only the Router has visibility into). Re-requested a Greptile review; Greptile's second pass on the original round had already raised its score to 4/5 ("safe to merge, purely additive, no existing call sites changed") before this round of fixes even landed.
 - 2026-07-20 (later): GitHub reported a merge conflict against the base branch, which had advanced 50 commits since the PR was opened. Rebased onto the current upstream base, resolved two non-conflicting append conflicts in the shared test file, fixed one new lint rule the rebase surfaced, and force-pushed. All 77 CI checks now pass (lint, full unit matrix, security scans, UI build, no performance regression).
+- 2026-07-20 (later still): Codecov's automated check flagged patch coverage of 86.15%, with 9 diff lines missing test coverage. Located the exact 9 lines by cross-referencing the diff's new-line numbers against a local coverage run, and added 6 tests to close the gap. Re-requested a Greptile review to cover the newest commits.
 
-**Status:** CI-clean, awaiting maintainer approval ("At least 1 approving review is required by reviewers with write access" — no outstanding correctness issues, purely a wait for a human reviewer)
+**Status:** CI-clean, awaiting maintainer approval ("At least 1 approving review is required by reviewers with write access" — no outstanding correctness or coverage issues, purely a wait for a human reviewer)
 
 ---
 
@@ -286,6 +309,7 @@ Resolved a merge conflict against the real upstream base branch, which had advan
 - Practiced keeping a PR's diff strictly scoped to one file set, including catching and reverting an unrelated file that an auto-formatter touched
 - Learned to respond to automated code review feedback professionally: fix what's genuinely correct (the two real bugs Greptile found), push back respectfully with technical reasoning where I disagreed (the `llms/` vs `router_utils/` architecture suggestion), and verify my own fix for the feedback didn't introduce a new regression before committing it
 - Learned to rebase a long-lived branch onto a fast-moving upstream base: the fork I was comparing my own lint gate against had gone stale, which made a routine rebase temporarily look like it introduced dozens of violations that were actually just unrelated upstream commits my fork hadn't caught up on yet
+- Learned to find exactly which lines a coverage tool is complaining about rather than guessing: parsed the diff's hunk headers to compute the real new-file line numbers for my own added code, then intersected that with a local `pytest --cov-report=term-missing` run to identify the exact 9 lines before writing a single test, which meant every test I wrote was aimed at a real gap instead of padding coverage broadly
 
 ### Challenges Overcome
 
