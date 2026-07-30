@@ -17,11 +17,11 @@ This issue is meaningful because the `prompt_cache_min_tokens` field is used at 
 
 1. **Value inconsistency across claude-fable-5 family keys**: The base entry `"claude-fable-5"` sets `prompt_cache_min_tokens: 512`, but the Bedrock-routed variants (`anthropic.claude-fable-5`, `us.anthropic.claude-fable-5`, `eu.anthropic.claude-fable-5`, `global.anthropic.claude-fable-5`) all set `prompt_cache_min_tokens: 1024`. The `azure_ai/claude-fable-5`, `vertex_ai/claude-fable-5`, and `vertex_ai/claude-fable-5@default` keys are missing the field entirely.
 
-2. **Missing field on 499 other entries**: Across the entire file, 499 model entries declare `"supports_prompt_caching": true` but do not define `prompt_cache_min_tokens` at all. This includes Amazon Nova models, many Bedrock Anthropic entries, and Azure/Codex models.
+2. **Missing field on 29 derived Anthropic entries**: Across the file, there are 29 specific Anthropic model variants (like `azure_ai/claude-haiku-4-5` or `openrouter/anthropic/claude-opus-4.5`) that declare `"supports_prompt_caching": true` but are missing `prompt_cache_min_tokens`. Because they are Anthropic models, their minimums are well-known and already exist under different keys in the same file.
 
 ### Expected Behavior
-- All `claude-fable-5` variant keys should share the same `prompt_cache_min_tokens` value.
-- Every entry with `"supports_prompt_caching": true` should explicitly define `prompt_cache_min_tokens`.
+- All `claude-fable-5` variant keys should share the same `prompt_cache_min_tokens: 512` value.
+- The 29 targeted Anthropic variants should have their `prompt_cache_min_tokens` filled in using the exact values from their base counterparts (e.g., Haiku = 4096, Sonnet/Opus = 1024/2048/4096 depending on the specific version).
 
 ### Current Behavior
 - `claude-fable-5` → `512`
@@ -29,102 +29,64 @@ This issue is meaningful because the `prompt_cache_min_tokens` field is used at 
 - `azure_ai/claude-fable-5` → **MISSING**
 - `vertex_ai/claude-fable-5` → **MISSING**
 - `vertex_ai/claude-fable-5@default` → **MISSING**
-- 499 other entries with `supports_prompt_caching: true` → **MISSING**
+- 26 other Anthropic variants → **MISSING**
 
-Downstream, this causes the `get_prompt_cache_min_tokens()` utility (in `litellm/utils.py`) to fall back to the hardcoded default (`DEFAULT_MINIMUM_PROMPT_CACHE_TOKEN_COUNT = 1024`) for all missing entries, which is incorrect for models like Nova that use lower or higher thresholds.
+Downstream, this causes `get_prompt_cache_min_tokens()` to fall back to the hardcoded default (`1024`) for missing entries, which is incorrect for models like Haiku 4.5 (which should be 4096) or Fable-5 (which should be 512).
 
 ### Affected Components
-- `model_prices_and_context_window.json` (line 1361, 1397, 1433, 1469, 2728, 11811, 36647, 36677, and 499 more scattered entries)
-- `litellm/utils.py` — contains `get_prompt_cache_min_tokens()` which reads this file
-- `tests/test_litellm/test_utils.py` — line 4820: `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` currently asserts `claude-fable-5 == 512` and `anthropic.claude-fable-5 == 1024` (will need updating after fix)
+- `model_prices_and_context_window.json` (claude-fable-5 keys and the 29 targeted missing keys)
+- `litellm/utils.py`
+- `tests/test_litellm/test_utils.py`
 
 ---
 
 ## Reproduction Process
 
 ### Environment Setup
-No special environment setup was needed beyond having the repository cloned and Python 3 available. The reproduction is purely a JSON audit — no LLM API keys or running server required.
+No special environment setup was needed beyond having the repository cloned and Python 3 available. 
 
 - **Repo**: `git clone git@github.com:mathew-felix/litellm.git`
 - **Branch**: `git checkout -b fix-issue-35011 upstream/main`
-- **Python**: 3.11 (system Python, no virtualenv needed for the reproduction script)
-
-No errors were encountered during setup.
+- **Python**: 3.11
 
 ### Steps to Reproduce
 1. Clone the repository and check out `upstream/main`.
-2. Run the reproduction script at the root of the repository:
-   ```bash
-   python3 reproduce_35011.py
-   ```
+2. Run the reproduction script: `python3 reproduce_35011.py`
 3. Observe Part 1 output: 5 of 8 `claude-fable-5` keys have inconsistent or missing `prompt_cache_min_tokens`.
-4. Observe Part 2 output: 499 entries declare `supports_prompt_caching: true` with no `prompt_cache_min_tokens` defined.
+4. Observe Part 2 output: The 29 targeted Anthropic entries are missing their `prompt_cache_min_tokens` values.
 
 ### Reproduction Evidence
-- Reproduction script commit: https://github.com/mathew-felix/litellm/commit/f5479aad0f
+- Reproduction script commit: https://github.com/mathew-felix/litellm/commit/f5479aad0f (updated in subsequent commit to target the 29 keys)
 - Branch (buggy code, no fix): https://github.com/mathew-felix/litellm/tree/fix-issue-35011
 
-### Observed Output
-```
-=================================================================
-PART 1: claude-fable-5 prompt_cache_min_tokens values
-=================================================================
-  [OK]    'claude-fable-5'                                    supports_prompt_caching=True  prompt_cache_min_tokens=512
-  [OK]    'anthropic.claude-fable-5'                          supports_prompt_caching=True  prompt_cache_min_tokens=1024
-  [OK]    'global.anthropic.claude-fable-5'                   supports_prompt_caching=True  prompt_cache_min_tokens=1024
-  [OK]    'us.anthropic.claude-fable-5'                       supports_prompt_caching=True  prompt_cache_min_tokens=1024
-  [OK]    'eu.anthropic.claude-fable-5'                       supports_prompt_caching=True  prompt_cache_min_tokens=1024
-  [BUG]   'azure_ai/claude-fable-5'                           supports_prompt_caching=True  prompt_cache_min_tokens=MISSING
-  [BUG]   'vertex_ai/claude-fable-5'                          supports_prompt_caching=True  prompt_cache_min_tokens=MISSING
-  [BUG]   'vertex_ai/claude-fable-5@default'                  supports_prompt_caching=True  prompt_cache_min_tokens=MISSING
-
-  BUG CONFIRMED: 2 distinct values found across claude-fable-5 keys: [512, 1024]
-
-=================================================================
-PART 2: Entries with supports_prompt_caching=true but no prompt_cache_min_tokens
-=================================================================
-  Total entries with supports_prompt_caching=true but missing prompt_cache_min_tokens: 499
-
-  BUG CONFIRMED: 499 entries claim caching support but have no minimum token count set.
-```
-
 ### My Findings
-- The direct entry `"claude-fable-5"` was set to `512` — consistent with Anthropic's documented minimum for the fable-5 family.
-- The Bedrock-specific variants (`anthropic.*`) were set to `1024`, which appears to be carried over from older Claude 3 entries where Bedrock required a higher minimum.
-- Azure AI and Vertex AI variants were never given the field at all when they were added to the registry.
-- The 499 missing entries span Amazon Nova, many Bedrock-routed Anthropic entries, Azure Codex models, and others — these were likely added without a defined Anthropic-style minimum, so they were left blank.
+- The base `claude-fable-5` correctly has `512` (Anthropic's documented minimum). The Bedrock variants mistakenly have `1024`.
+- The 29 missing entries are all clearly derived from Anthropic base models, meaning we can backfill their values exactly without guessing. (Guessing is dangerous because setting it too high disables caching entirely for prefixes that would have worked).
 
 ---
 
 ## Solution Approach
 
 ### Analysis
-The root cause is a lack of enforcement: there is no validation step that ensures newly added caching-capable models also specify their minimum token count. Each provider has different documented minimums — there is no universal default that works correctly for all of them.
+The Fable-5 mismatch occurred because the Bedrock variants were likely copy-pasted from older Claude models where Bedrock required a 1024 minimum. The 29 missing entries were added without explicitly defining the minimum, leaving them to fall back to the 1024 default, which is wrong for models like Haiku (4096).
 
 ### Proposed Solution
-Two targeted changes to `model_prices_and_context_window.json`:
-1. Unify all `claude-fable-5` keys to `prompt_cache_min_tokens: 512` (matching the authoritative base entry and Anthropic's published docs).
-2. Backfill the 499 missing entries with the correct per-provider minimum, sourced from each provider's official caching documentation.
+1. Unify all 8 `claude-fable-5` keys to `prompt_cache_min_tokens: 512`.
+2. Backfill the 29 missing Anthropic keys with their exact known minimums (provided by the reviewer).
 
 ### Implementation Plan (UMPIRE Framework)
 
 **Understand:**
-`model_prices_and_context_window.json` has two classes of bugs: value disagreement within the `claude-fable-5` family, and completely missing `prompt_cache_min_tokens` on 499 entries that declare `supports_prompt_caching: true`. The `get_prompt_cache_min_tokens()` function in `litellm/utils.py` reads this field at runtime, so incorrect or missing values cause silent caching failures.
+We need to unify Fable-5 keys to `512`, and backfill 29 specific Anthropic variant keys. We should *not* backfill the other ~470 non-Anthropic models.
 
 **Match:**
-The pattern for this type of fix already exists in the repository:
-- The `claude-opus-4-5`, `claude-sonnet-4-5` entries in the Bedrock section serve as reference: they correctly set provider-specific minimums (4096, 1024 respectively).
-- The existing test `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` in `tests/test_litellm/test_utils.py` tests this exact function and will be the test to update/extend.
+The pattern for this fix exists within the JSON file itself (other keys for the same models have the correct values) and in `test_utils.py`.
 
 **Plan:**
-1. **Unify claude-fable-5 family**: Set `prompt_cache_min_tokens: 512` on all 8 `claude-fable-5` keys in `model_prices_and_context_window.json` (lines 1395, 1431, 1467, 1503, 2756, 36675, and the `@default` variant). The value `512` is correct because Anthropic's documentation specifies 512 for this model family.
-2. **Backfill 499 missing entries**: Group the 499 missing entries by provider prefix and apply the correct minimum per provider:
-   - Amazon Nova models → `1024` (AWS documented minimum)
-   - Bedrock-routed Anthropic models → `1024` (Bedrock platform minimum)
-   - Azure AI / Vertex AI Anthropic models → `512` (same as direct Anthropic access)
-   - Other providers → research and apply documented minimums
-3. **Update affected tests**: Update `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` to assert that all `claude-fable-5` variants return `512`.
-4. **Run `make lint` and `make test-unit`** to verify no regressions.
+1. **Unify claude-fable-5 family**: Set `prompt_cache_min_tokens: 512` on all 8 `claude-fable-5` keys.
+2. **Backfill 29 targeted entries**: Update `model_prices_and_context_window.json` for the 29 keys with the exact values provided by the reviewer (e.g., `azure_ai/claude-haiku-4-5` to 4096).
+3. **Update tests**: Update `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` to assert `512` for all Fable-5 keys.
+4. **Integrate reviewer test**: Add the reviewer's test that asserts every key for a given model agrees on its minimum.
 
 **Implement:** *(placeholder — Phase III)*
 - Branch: https://github.com/mathew-felix/litellm/tree/fix-issue-35011
