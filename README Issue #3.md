@@ -3,7 +3,7 @@ Contribution Number: 3
 Student: Felix Mathew
 Issue: https://github.com/BerriAI/litellm/issues/35011
 Branch: https://github.com/mathew-felix/litellm/tree/fix-issue-35011
-Status: Phase II Complete
+Status: In Review
 
 ## Why I Chose This Issue
 I chose this issue because it's a great opportunity to understand how LiteLLM manages its model pricing and context window registry. Prompt caching is a massive cost-saving feature for LLM gateways, and fixing inconsistent configuration data guarantees that the caching logic triggers correctly for all supported models. It builds on my familiarity with the LiteLLM codebase from my previous contribution, while letting me tackle a focused, high-impact data consistency bug.
@@ -131,32 +131,62 @@ Run `python3 reproduce_35011.py` after the fix. Expected output: no `[BUG]` line
 ---
 
 ## Pull Request
-PR Link: *(To be drafted during Phase IV)*
+PR Link: https://github.com/BerriAI/litellm/pull/35378
 
-PR Description: *(To be drafted during Phase IV)*
+PR Description:
+```markdown
+## TLDR
+
+Problem this solves:
+
+- The four Bedrock `claude-fable-5` keys (`anthropic.`, `us.`, `eu.`, `global.`) had `prompt_cache_min_tokens: 1024` while the base `claude-fable-5` entry correctly has `512`
+- 29 Anthropic model variants (azure_ai, openrouter, snowflake, vercel_ai_gateway, vertex_ai) have `supports_prompt_caching: true` but no `prompt_cache_min_tokens`, so `get_prompt_cache_min_tokens()` falls back to the wrong default
+
+How it solves it:
+
+- Sets all 8 `claude-fable-5` keys to `512` (Anthropic's documented minimum)
+- Fills in the 29 missing entries using values already in the file under their base model keys
+
+## Relevant issues
+
+Fixes #35011
+
+## Type
+
+🐛 Bug Fix
+
+## Changes
+
+- `model_prices_and_context_window.json` + backup: fixed 4 Bedrock fable-5 keys (1024 → 512), added `prompt_cache_min_tokens` to 29 missing Anthropic variants
+- `tests/test_litellm/test_utils.py`: updated test to assert all `claude-fable-5` variants return `512`
+```
 
 Maintainer Feedback:
-*(To be filled in after PR submission)*
+Awaiting maintainer review. Pre-PR feedback from contributor/maintainer Tanisha-Katara was incorporated into the scope and plan.
 
-Status: Ready for Phase IV (PR Creation)
+Status: In Review
 
 ---
 
 ## Learnings & Reflections
-*(To be filled in after completion)*
 
 ### Technical Skills Gained
-*(To be filled in)*
+- **Model Registry Architecture**: Deepened understanding of how LiteLLM maintains capability metadata and token pricing in `model_prices_and_context_window.json`.
+- **Package Dist & Test Environment Dual-Mapping**: Discovered that LiteLLM unit tests rely on `litellm/model_prices_and_context_window_backup.json` inside python site-packages, requiring parallel maintenance of backup configuration files.
+- **Precision Data Validation**: Learned techniques for programmatically auditing and backfilling large (46k+ line) JSON registries without introducing syntax errors or unintended mutations.
 
 ### Challenges Overcome
-*(To be filled in)*
+- **Scoping & Avoiding Destructive Guesses**: Initial analysis targeted all 499 missing entries, but reviewer feedback pointed out that setting guessed minimums for non-Anthropic models breaks prompt caching. Successfully pivoted to a narrow, high-confidence 29-entry Anthropic backfill.
+- **Pytest Backup File Discrepancy**: Unit tests initially failed after modifying root JSON because `get_model_cost_map()` loaded `litellm/model_prices_and_context_window_backup.json`. Identified the root cause and synchronized edits across both files.
 
 ### What I'd Do Differently Next Time
-*(To be filled in)*
+- Check whether package distribution files or bundled backups exist alongside root configuration files before running tests.
+- Seek reviewer alignment on broad data cleanup issues earlier in the contribution process.
 
 ### Resources Used
 - https://github.com/BerriAI/litellm/issues/35011
+- https://github.com/BerriAI/litellm/pull/35378
 - https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 - https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
 - `litellm/utils.py` — `get_prompt_cache_min_tokens()` function
-- `tests/test_litellm/test_utils.py` — existing caching tests (lines 4811–4834)
+- `tests/test_litellm/test_utils.py` — existing caching tests
