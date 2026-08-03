@@ -167,19 +167,21 @@ I went back through the diff key by key against the exact 29-entry list Tanisha 
 ## Pull Request
 PR Link: https://github.com/BerriAI/litellm/pull/35378
 
-PR Description:
+PR Description (updated after the Week 2 follow-up, to fold in Tanisha's point about why this bug matters):
 ```markdown
 ## TLDR
 
 Problem this solves:
 
-- The four Bedrock `claude-fable-5` keys (`anthropic.`, `us.`, `eu.`, `global.`) had `prompt_cache_min_tokens: 1024` while the base `claude-fable-5` entry correctly has `512`
-- 29 Anthropic model variants (azure_ai, openrouter, snowflake, vercel_ai_gateway, vertex_ai) have `supports_prompt_caching: true` but no `prompt_cache_min_tokens`, so `get_prompt_cache_min_tokens()` falls back to the wrong default
+Anthropic models served through reseller aliases had wrong or missing prompt cache minimums. The four Bedrock `claude-fable-5` keys (`anthropic.`, `us.`, `eu.`, `global.`) were set to `1024` while the base `claude-fable-5` entry correctly has `512`. Separately, 29 Anthropic model variants across azure_ai, openrouter, snowflake, vercel_ai_gateway and vertex_ai declare `supports_prompt_caching: true` but carry no `prompt_cache_min_tokens` at all, so `get_prompt_cache_min_tokens()` silently falls back to the wrong default for each of them.
 
 How it solves it:
 
-- Sets all 8 `claude-fable-5` keys to `512` (Anthropic's documented minimum)
-- Fills in the 29 missing entries using values already in the file under their base model keys
+Sets all 8 `claude-fable-5` keys to `512`, Anthropic's documented minimum. Fills in the 29 missing entries using values that already exist in the file under each model's base key, so nothing here is guessed.
+
+## Why this isn't cosmetic
+
+Both directions of a wrong minimum fail silently, which is basically why 29 of these sat unset for this long without anyone catching it. Set the minimum too high and `is_prompt_caching_valid_prompt` says no to a prompt that would have cached just fine, so you skip caching that would have worked. Set it too low, or just leave it unset so it falls back to the default, and the function says yes, the caching marker goes out, and Anthropic quietly processes the request without caching it at all. No error comes back. You just get `cache_creation_input_tokens: 0` and a bill that looks completely normal. There's nothing in the response that tells you caching didn't happen.
 
 ## Relevant issues
 
@@ -191,14 +193,14 @@ Fixes #35011
 
 ## Changes
 
-- `model_prices_and_context_window.json` + backup: fixed 4 Bedrock fable-5 keys (1024 → 512), added `prompt_cache_min_tokens` to 29 missing Anthropic variants
-- `tests/test_litellm/test_utils.py`: updated test to assert all `claude-fable-5` variants return `512`
+Two commits here. The first (`c1a4f75c41`) fixes the 4 Bedrock fable-5 keys and backfills the 29 approved Anthropic variants, plus updates `test_utils.py` to assert `claude-fable-5` resolves to `512` everywhere. The second (`5239e748dc`) walks back 12 extra keys that had slipped into the first commit outside the approved list during a branch cleanup, and adds the reviewer's own regression test file (`tests/test_litellm/test_prompt_cache_min_tokens_aliases.py`) so this specific class of bug can't come back unnoticed.
 ```
 
 Maintainer Feedback:
 - Pre-PR feedback from contributor/maintainer Tanisha-Katara was incorporated into the scope and plan, including her exact list of 29 keys and her regression test file.
-- 2026-08-03: Caught a scope drift on my own before requesting another review — a branch cleanup had let 12 out-of-scope keys into the backfill. Pushed a follow-up commit narrowing the change back to exactly Tanisha's 29 keys and posted an update on the issue explaining what happened and what changed.
-- Awaiting another maintainer/reviewer pass.
+- 2026-08-03: Caught a scope drift on my own before requesting another review — a branch cleanup had let 12 out-of-scope keys into the backfill. Pushed a follow-up commit narrowing the change back to exactly Tanisha's 29 keys.
+- 2026-08-03 (later): Tanisha independently re-verified the follow-up commit (`5239e748dc`) rather than taking the commit message at face value — confirmed all 29 keys carry her exact values, all 8 `claude-fable-5` keys read `512`, and all 12 out-of-scope keys (github_copilot, gmi, perplexity, both vertex_ai/claude-opus-4-1 entries) are unset again. She also replayed her test's assertions directly against the JSON herself. She flagged that the silent, bidirectional nature of this failure mode (wrong-high skips valid caching, wrong-low/missing ships a caching marker that Anthropic silently ignores) is the actual reason this fix matters, and asked that it be visible to a reviewer rather than left implicit. Updated the PR description with a "Why this isn't cosmetic" section covering it, and replied on the issue thanking her for the re-check.
+- Awaiting a maintainer merge.
 
 Status: In Review
 
@@ -220,6 +222,7 @@ Status: In Review
 - Check whether package distribution files or bundled backups exist alongside root configuration files before running tests.
 - Seek reviewer alignment on broad data cleanup issues earlier in the contribution process.
 - After any hard reset / cherry-pick / amend on a branch, re-diff the actual data (not just the unified diff text) against the reviewer's original approved list before pushing, since branch surgery is exactly where scope creep sneaks in unnoticed.
+- Put the "why this matters" explanation in the PR description from the start, not just in test docstrings. Tanisha had to point out that the silent, bidirectional failure mode is what makes this fix non-cosmetic; that belongs somewhere a reviewer sees it before reading a single line of the diff.
 
 ### Resources Used
 - https://github.com/BerriAI/litellm/issues/35011
