@@ -118,15 +118,49 @@ Run `python3 reproduce_35011.py` after the fix. Expected output: no `[BUG]` line
 ---
 
 ## Implementation Notes
-- **JSON Editing Challenge**: A small but significant challenge encountered was `test_utils.py` falling back to `litellm/model_prices_and_context_window_backup.json` when testing. I had to ensure that both the main root `model_prices_and_context_window.json` and the backup version in the package directory were updated identically to make the tests pass.
-- I wrote a small Python script to surgically inject the 29 missing Anthropic variants using the exact JSON dictionary the reviewer provided on the issue. This avoided doing it manually over a 46,000 line file, minimizing the risk of a syntax error.
+
+### Week 1 Progress
+
+**What I built:**
+
+Unified the `claude-fable-5` family on `512` and backfilled the 29 Anthropic variant keys Tanisha-Katara identified on the issue.
+
+**Files modified:**
+- `model_prices_and_context_window.json` — updated 4 Fable-5 Bedrock keys to 512, backfilled 29 missing Anthropic variant keys
+- `litellm/model_prices_and_context_window_backup.json` — same modifications, kept in sync
+- `tests/test_litellm/test_utils.py` — updated `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` to assert `512` for all Fable-5 keys
+
+**Key commit:** [`c1a4f75c41`](https://github.com/mathew-felix/litellm/commit/c1a4f75c41) — fix(utils): unify claude-fable-5 min tokens and backfill 29 missing Anthropic caches
+
+**Challenges faced:**
+- `test_utils.py` was pulling from `litellm/model_prices_and_context_window_backup.json` rather than the root file during testing. Had to keep both files in sync by hand for every edit.
+- Wrote a small Python script to inject the 29 missing Anthropic variants using the exact dictionary the reviewer posted, rather than editing a 46,000-line file by hand.
+
+### Week 2 Progress
+
+**What I built:**
+
+Caught and fixed a scope drift in the backfill: a branch cleanup (hard reset + cherry-pick onto `upstream/litellm_internal_staging`, followed by an amend) had let 12 extra keys into the change that weren't part of Tanisha's approved 29 — `github_copilot/claude-haiku-4.5`, `github_copilot/claude-opus-4.5`, `github_copilot/claude-sonnet-4.5`, `gmi/anthropic/claude-opus-4.5`, `gmi/anthropic/claude-sonnet-4.5`, `perplexity/anthropic/claude-opus-4-6`, `perplexity/anthropic/claude-opus-4-7`, `perplexity/anthropic/claude-opus-4-5`, `perplexity/anthropic/claude-sonnet-4-5`, `perplexity/anthropic/claude-haiku-4-5`, `vertex_ai/claude-opus-4-1`, and `vertex_ai/claude-opus-4-1@20250805`.
+
+I went back through the diff key by key against the exact 29-entry list Tanisha posted, confirmed the 12 extras weren't on it, and reverted just those, keeping the 29 approved keys and the 4 Fable-5 fixes untouched. Re-verified line by line afterward that the file matched her list exactly, with zero keys added beyond it.
+
+**Files modified:**
+- `model_prices_and_context_window.json` — removed `prompt_cache_min_tokens` from the 12 out-of-scope keys
+- `litellm/model_prices_and_context_window_backup.json` — same removal, kept in sync
+
+**Key commit:** [`5239e748dc`](https://github.com/mathew-felix/litellm/commit/5239e748dc) — fix(utils): narrow prompt_cache_min_tokens backfill to reviewer-approved 29 keys
+
+**Challenges faced:**
+- The extras were easy to miss on a surface read of the diff, since `git show`'s default 3-line context sometimes attributes a hunk to the wrong model key when the actual key name falls outside the visible context window. Confirmed the real additions by diffing the full JSON key-by-key against the branch's parent commit instead of trusting the unified diff text directly.
+- Also ran the full `tests/test_litellm/test_*.py` glob (matching the `Unit Tests: MCP, Secrets, Containers & Misc` CI job that was failing in the PR) to make sure the revert didn't break anything else. Found 5 failing tests total, none related to this change: one flaky retry-count test and four `gpt-5.4` backup/main drift tests, both confirmed present on the commit before this fix too.
 
 ---
 
 ## Code Changes
-- `model_prices_and_context_window.json`: Updated 4 Fable-5 variant keys to 512, and backfilled 29 missing Anthropic variant keys.
+- `model_prices_and_context_window.json`: Updated 4 Fable-5 variant keys to 512, backfilled the 29 approved Anthropic variant keys, then reverted 12 out-of-scope keys that had slipped in during a branch cleanup.
 - `litellm/model_prices_and_context_window_backup.json`: Same modifications to ensure tests and offline mode operate correctly.
 - `tests/test_litellm/test_utils.py`: Updated assertions in `test_get_prompt_cache_min_tokens_differs_per_platform_for_same_model` to verify all `claude-fable-5` variants return `512`.
+- `tests/test_litellm/test_prompt_cache_min_tokens_aliases.py`: Added Tanisha-Katara's regression test file as provided, confirming every alias resolves to its documented minimum and agrees with its canonical model.
 
 ---
 
@@ -162,7 +196,9 @@ Fixes #35011
 ```
 
 Maintainer Feedback:
-Awaiting maintainer review. Pre-PR feedback from contributor/maintainer Tanisha-Katara was incorporated into the scope and plan.
+- Pre-PR feedback from contributor/maintainer Tanisha-Katara was incorporated into the scope and plan, including her exact list of 29 keys and her regression test file.
+- 2026-08-03: Caught a scope drift on my own before requesting another review — a branch cleanup had let 12 out-of-scope keys into the backfill. Pushed a follow-up commit narrowing the change back to exactly Tanisha's 29 keys and posted an update on the issue explaining what happened and what changed.
+- Awaiting another maintainer/reviewer pass.
 
 Status: In Review
 
@@ -178,10 +214,12 @@ Status: In Review
 ### Challenges Overcome
 - **Scoping & Avoiding Destructive Guesses**: Initial analysis targeted all 499 missing entries, but reviewer feedback pointed out that setting guessed minimums for non-Anthropic models breaks prompt caching. Successfully pivoted to a narrow, high-confidence 29-entry Anthropic backfill.
 - **Pytest Backup File Discrepancy**: Unit tests initially failed after modifying root JSON because `get_model_cost_map()` loaded `litellm/model_prices_and_context_window_backup.json`. Identified the root cause and synchronized edits across both files.
+- **Scope Drift During Branch Cleanup**: A hard reset and cherry-pick onto `upstream/litellm_internal_staging`, followed by an amend, quietly let 12 keys outside the reviewer's approved list into the change. Caught it by diffing the actual JSON contents key-by-key against the branch's parent commit rather than trusting the unified diff's context lines, and reverted just those 12 in a separate follow-up commit.
 
 ### What I'd Do Differently Next Time
 - Check whether package distribution files or bundled backups exist alongside root configuration files before running tests.
 - Seek reviewer alignment on broad data cleanup issues earlier in the contribution process.
+- After any hard reset / cherry-pick / amend on a branch, re-diff the actual data (not just the unified diff text) against the reviewer's original approved list before pushing, since branch surgery is exactly where scope creep sneaks in unnoticed.
 
 ### Resources Used
 - https://github.com/BerriAI/litellm/issues/35011
